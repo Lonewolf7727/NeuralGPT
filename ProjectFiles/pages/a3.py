@@ -22,7 +22,7 @@ client_ports = []
 
 async def launch_pygui():
     # Run the PySimpleGUI script as a separate process
-    subprocess.Popen(["python", "py.py"])
+    subprocess.Popen(["python", "pySimpleGUI.py"])
 
 async def main():
 
