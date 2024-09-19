@@ -13,10 +13,11 @@ import pdfplumber
 import streamlit as st
 import fireworks.client
 import PySimpleGUI as sg
+import requests
 import chromadb.utils.embedding_functions as embedding_functions
 from tempfile import TemporaryDirectory
 from langchain_core.embeddings import Embeddings
-from chromadb.api.types import EmbeddingFunction
+from chromadb import EmbeddingFunction
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from io import BytesIO
 from fireworks.client import Fireworks, AsyncFireworks
@@ -27,9 +28,18 @@ from operator import itemgetter
 from AgentGPT import AgentsGPT
 from forefront import ForefrontClient
 from PyCharacterAI import Client
+from langchain_community.utilities.sql_database import SQLDatabase
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
+from langchain_fireworks import ChatFireworks
+from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+from langchain.callbacks.tracers import LangChainTracer
+from langchain_community.agent_toolkits.github.toolkit import GitHubToolkit
+from langchain_community.utilities.github import GitHubAPIWrapper
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
 from langchain import hub
+from langchain_google_community import GmailToolkit
 from langchain_experimental.tools import PythonREPLTool
 from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import create_react_agent
@@ -53,6 +63,10 @@ from langchain.memory import ConversationBufferMemory
 from langchain_community.document_loaders import TextLoader
 from langchain.llms import HuggingFaceHub
 from langchain.agents import load_tools, initialize_agent, AgentType
+from langchain_google_community.gmail.utils import (
+    build_resource_service,
+    get_gmail_credentials,
+)
 from langchain.prompts.chat import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
@@ -98,7 +112,7 @@ class ChromaEmbeddingsAdapter(Embeddings):
 
     def embed_query(self, query):
         return self.ef([query])[0]
-
+    
 class NeuralAgent:
 
     def __init__(self):
@@ -302,6 +316,51 @@ class NeuralAgent:
     def createPDFstore(self, splits, collection_name):
         self.vectordb = self.create_db(splits, collection_name)
         return self.vectordb
+    
+    def get_engine_for_chinook_db(self):
+        """Pull sql file, populate in-memory database, and create engine."""
+        url = "https://raw.githubusercontent.com/lerocha/chinook-database/master/ChinookDatabase/DataSources/Chinook_Sqlite.sql"
+        response = requests.get(url)
+        sql_script = response.text
+
+        connection = sqlite3.connect(":memory:", check_same_thread=False)
+        connection.executescript(sql_script)
+        return create_engine(
+            "sqlite://",
+            creator=lambda: connection,
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+
+    
+    def askSQLagent(self, provider, question):
+        if provider == "Fireworks":
+            llm = ChatFireworks(model="accounts/fireworks/models/llama-v3p1-70b-instruct")
+        if provider == "Claude3":            
+            llm = ChatAnthropic(model="claude-3-5-sonnet-20240620")
+
+        engine = create_engine('sqlite:///d:/streamlit/chat-hub.db')
+        db = SQLDatabase(engine)
+
+        system_message = prompt_template.format(dialect="SQLite", top_k=5)
+
+        toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+
+        prompt_template = hub.pull("langchain-ai/sql-agent-system-prompt")
+
+        assert len(prompt_template.messages) == 1
+        print(prompt_template.input_variables)        
+        from langgraph.prebuilt import create_react_agent
+
+        agent_executor = create_react_agent(
+            llm, toolkit.get_tools(), state_modifier=system_message
+        )
+        events = agent_executor.stream(
+            {"messages": [("user", question)]},
+            stream_mode="values",
+        )
+        for event in events:
+            event["messages"][-1].pretty_print()
 
     def process_pdf(self, file_path, chunk, overlap):
         loader = PyPDFLoader(file_path)
@@ -573,15 +632,57 @@ class NeuralAgent:
             await server.wait_closed()
             print(f"WebSocket server on port {servers[server]['port']} stopped.")
 
-    def ask_interpreter(self, instruction, question, provider, api_keys):
+    def askGitHubAgent(self, instruction, question, provider, api_keys):
+        os.environ["FIREWORKS_API_KEY"] = api_keys.get('APIfireworks', '')
+        os.environ["ANTHROPIC_API_KEY"] = api_keys.get('APIanthropic', '')
+        os.environ["LANGCHAIN_API_KEY"] = api_keys.get('APIlangchain', '')
+        os.environ["GITHUB_APP_ID"] = api_keys.get('GitHubAppID', '')
+        os.environ["GITHUB_APP_PRIVATE_KEY"] = api_keys.get('GitHubAppPathToKey', '')
+        os.environ["GITHUB_REPOSITORY"] = api_keys.get('GitHubRepo', '')
+        os.environ["GITHUB_BRANCH"] = api_keys.get('GitHubAgentBranch', '')
+        os.environ["GITHUB_BASE_BRANCH"] = api_keys.get('GHitHubBaseBranch', '')
+        
+        if provider == "Fireworks":
+            llm = Fireworks(model="accounts/fireworks/models/llama-v3p1-70b-instruct", model_kwargs={"temperature":0.5, "max_tokens":4000, "top_p":1.0})
+        if provider == "Claude3":
+            llm = ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0.5, max_tokens=3200, timeout=None)
+
+        github = GitHubAPIWrapper()
+        toolkit = GitHubToolkit.from_github_api_wrapper(github)
+        tools = toolkit.get_tools()
+        
+        base_prompt = hub.pull("langchain-ai/react-agent-template")
+        prompt = base_prompt.partial(instructions=instruction)
+
+        app = create_react_agent(llm, tools, messages_modifier=instruction)
+        agent = create_tool_calling_agent(llm, tools, prompt)
+        agent_executor = create_react_agent(llm, tools)
+
+        messages = app.invoke({"messages": [("user", question)]})
+        ai_message = messages['messages'][-1].content
+        name = "Github agent"
+        res = json.dumps({"name": name, "message": ai_message})
+        return res
+
+    def ask_gmail_agent(self, instruction, question, provider, api_keys):
           
         os.environ["FIREWORKS_API_KEY"] = api_keys.get('APIfireworks', '')
         os.environ["ANTHROPIC_API_KEY"] = api_keys.get('APIanthropic', '')
+        os.environ["LANGCHAIN_API_KEY"] = api_keys.get('APIlangchain', '')
 
-        llm = ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0.5, max_tokens=3200, timeout=None, max_retries=2)
+        if provider == "Fireworks":
+            llm = Fireworks(model="accounts/fireworks/models/llama-v3p1-70b-instruct", model_kwargs={"temperature":0.5, "max_tokens":4000, "top_p":1.0})
+        if provider == "Claude3":
+            llm = ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0.5, max_tokens=3200, timeout=None)
 
-        tools = [PythonREPLTool()]
-        
+        credentials = get_gmail_credentials(
+            token_file="token.json",
+            scopes=["https://mail.google.com/"],
+            client_secrets_file="credentials.json",
+        )
+        api_resource = build_resource_service(credentials=credentials)
+        toolkit = GmailToolkit(api_resource=api_resource)
+        tools = toolkit.get_tools()
         base_prompt = hub.pull("langchain-ai/react-agent-template")
         prompt = base_prompt.partial(instructions=instruction)
 
@@ -591,16 +692,42 @@ class NeuralAgent:
 
         messages = app.invoke({"messages": [("user", question)]})
         ai_message = messages['messages'][-1].content
-        name = "Langchain file system agent"
+        name = "Python interpreter agent"
         res = json.dumps({"name": name, "message": ai_message})
         return res
 
-        return mes
+    def ask_interpreter(self, instruction, question, provider, api_keys):
+        os.environ["FIREWORKS_API_KEY"] = api_keys.get('APIfireworks', '')
+        os.environ["ANTHROPIC_API_KEY"] = api_keys.get('APIanthropic', '')
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
+        os.environ["LANGCHAIN_API_KEY"] = api_keys.get('APIlangchain', '')  
+        os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+        os.environ["LANGCHAIN_PROJECT"] = "NeuralGPT" 
+
+
+        llm = ChatAnthropic(model="claude-3-opus-20240229", temperature=0.5, max_tokens=3200, timeout=None, max_retries=2)
+
+        tools = [PythonREPLTool()]
+        
+        base_prompt = hub.pull("langchain-ai/react-agent-template")
+        prompt = base_prompt.partial(instructions=instruction)
+        tracer = LangChainTracer()
+
+        app = create_react_agent(llm, tools, messages_modifier=instruction)
+        agent = create_tool_calling_agent(llm, tools, prompt)
+        agent_executor = AgentExecutor(agent=agent, tools=tools)
+
+        messages = app.invoke({"messages": [("user", question)]}, config={"callbacks": [tracer]})
+        ai_message = messages['messages'][-1].content
+        name = "Python interpreter agent"
+        res = json.dumps({"name": name, "message": ai_message})
+        return res
 
     def get_search(self, question, provider, api_keys):
           
         os.environ["GOOGLE_CSE_ID"] = api_keys.get('GoogleCSE', '')
         os.environ["GOOGLE_API_KEY"] = api_keys.get('GoogleAPI', '')
+        os.environ["LANGCHAIN_API_KEY"] = api_keys.get('APIlangchain', '')
 
         search = DuckDuckGoSearchResults()
 
@@ -705,6 +832,9 @@ class NeuralAgent:
         os.environ["FIREWORKS_API_KEY"] = api_keys.get('APIfireworks', '')
         os.environ["ANTHROPIC_API_KEY"] = api_keys.get('APIanthropic', '')
         os.environ["HUGGINGFACEHUB_API_TOKEN"] = api_keys.get('HuggingFaceAPI', '')
+        os.environ["LANGCHAIN_API_KEY"] = api_keys.get('APIlangchain', '') 
+        os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+        os.environ["LANGCHAIN_PROJECT"] = "NeuralGPT" 
 
         llm = ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0.5, max_tokens=3200, timeout=None, max_retries=2)
 
@@ -739,11 +869,13 @@ class NeuralAgent:
         os.environ["GOOGLE_CSE_ID"] = api_keys.get('GoogleCSE', '')
         os.environ["GOOGLE_API_KEY"] = api_keys.get('GoogleAPI', '')
         os.environ["FIREWORKS_API_KEY"] = api_keys.get('APIfireworks', '')
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
         os.environ["ANTHROPIC_API_KEY"] = api_keys.get('APIanthropic', '')
         os.environ["HUGGINGFACEHUB_API_TOKEN"] = api_keys.get('HuggingFaceAPI', '')
+        os.environ["LANGCHAIN_API_KEY"] = api_keys.get('APIlangchain', '')
+        os.environ["LANGSMITH_API_KEY"] = api_keys.get('APIlangchain', '')
 
-
-        llm = ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0.5, max_tokens=3200, timeout=None, max_retries=2)
+        llm = ChatAnthropic(model="claude-3-opus-20240229", temperature=0.5, max_tokens=3200, timeout=None, max_retries=2)
 
         system_message = "You are an agent working as an instance of hierarchical cooperative multi-agent framework called NeuralGPT. You are responsible for handling operations on a local file system."
 
@@ -825,7 +957,7 @@ class NeuralAgent:
         generated_responses = []
         db = sqlite3.connect('chat-hub.db')
         cursor = db.cursor()
-        cursor.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 8")
+        cursor.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 4")
         messages = cursor.fetchall()
         messages.reverse()                                    
 
@@ -866,7 +998,7 @@ class NeuralAgent:
         generated_responses = []
         db = sqlite3.connect('chat-hub.db')
         cursor = db.cursor()
-        cursor.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 8")
+        cursor.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 4")
         messages = cursor.fetchall()
         messages.reverse()                                    
 
@@ -948,8 +1080,6 @@ class NeuralAgent:
 
         except Exception as e:
             print(f"Error: {e}")    
-                                        
-
 
     async def stop_client(self):
         conteneiro.clients.remove(self.cli_name2)        
@@ -965,6 +1095,7 @@ class NeuralAgent:
         print(response)
         data = json.loads(response)
         text = data['message']
+        return text
 
     async def pickPortSrv(self, agent, inputs, outputs):
         activeSrv = str(conteneiro.servers)
@@ -989,9 +1120,18 @@ class NeuralAgent:
         print(f"port of server chosen by agent: {number}")
         return number
 
+    async def defineMessageToGitHubAgent(self, inputs, outputs, message, neural):
+        instruction = f"You are now temporarily working as a part of agent-to-agent communication system. Your current job is to define questions directed to an agent specializing in working GitHub repositories. Remember to formulate clear instructions associated with the subject(s) discussed in the message that will be given to you as context."
+        question = f"This input is a part of function allowing to query chat history database. Your main and only job is to analyze the input message and respond by formulating instruction for a fellow agent specialized in working with GitHub repositories. Your instructionsa should include tasks involving actions which should be taken on a GitHub repository chosen by user, associated with the subject(s) discussed in the following message: {message}."
+        msg = await neural.askAgent(instruction, inputs, outputs, question, 1500)
+        print(msg)
+        data = json.loads(msg)
+        msgText = data['message']
+        return msgText
+
     async def defineMessageToInterpreter(self, inputs, outputs, message, neural):
         instruction = f"You are now temporarily working as a part of agent-to-agent communication system. Your current job is to define questions directed to an agent specializing in working with Python code. Remember to formulate clear instructions associated with the subject(s) discussed in the message that will be given to you as context."
-        question = f"This input is a part of function allowing to query chat history database. Your main and only job is to analyze the input message and respond by formulating instruction for a fellow agent specialized in working with Python code. Your instructionsa should involve tasks involving coding in Python associated with the subject(s) discussed in the following message: {message}."
+        question = f"This input is a part of function allowing to query chat history database. Your main and only job is to analyze the input message and respond by formulating instruction for a fellow agent specialized in working with Python code. Your instructionsa should include tasks involving coding in Python associated with the subject(s) discussed in the following message: {message}."
         msg = await neural.askAgent(instruction, inputs, outputs, question, 1500)
         print(msg)
         data = json.loads(msg)
@@ -1105,7 +1245,6 @@ class NeuralAgent:
         await self.startClient(clientPort)
 
     async def ask_chaindesk(self, agentID, question):
-        id = "clhet2nit0000eaq63tf25789"
         agent = Chaindesk(agentID)
         response = await agent.handleInput(question)
         print(response)
