@@ -17,9 +17,9 @@ import streamlit as st
 import PySimpleGUI as sg
 import conteneiro
 import pdfplumber
-from SQLmanager import SQLmanagement
 import websocket_manager
 from io import BytesIO
+from SQLmanager import SQLmanagement
 from agent_neural import NeuralAgent
 from agents_neural import Fireworks, Copilot, ChatGPT, Claude3, ForefrontAI, Flowise, Chaindesk, CharacterAI
 from langchain.tools import BaseTool, StructuredTool, tool
