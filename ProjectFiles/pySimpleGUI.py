@@ -5,7 +5,6 @@ import sqlite3
 import websockets
 import websocket
 import asyncio
-import sqlite3
 import json
 import requests
 import asyncio
@@ -18,6 +17,8 @@ import streamlit as st
 import PySimpleGUI as sg
 import conteneiro
 import pdfplumber
+from SQLmanager import SQLmanagement
+import websocket_manager
 from io import BytesIO
 from agent_neural import NeuralAgent
 from agents_neural import Fireworks, Copilot, ChatGPT, Claude3, ForefrontAI, Flowise, Chaindesk, CharacterAI
@@ -79,7 +80,12 @@ async def main():
             ],
             [
             sg.Column([
-                [sg.Button('Start WebSocket server'), sg.Button('Stop WebSocket server'), sg.Button('Get server info')],
+                [
+                sg.Button('Start WebSocket server'), 
+                sg.Button('Stop WebSocket server'), 
+                sg.Button('Get Server list'), 
+                sg.Button('Get server info')
+                ],
                 [sg.Multiline(size=(98, 4), key='-SERVER_PORTS-')],
                 [sg.Multiline(size=(98, 4), key='-SERVER_INFO-')],
                 [
@@ -336,6 +342,7 @@ async def main():
             [sg.Checkbox('Python intrpreter agent', default=True, enable_events=True, key='-ON/OFFPUP-')]
         ]
         user_prefunctions = [
+            [sg.Checkbox('Infinite loop user', default=False, enable_events=True, key='-INFINITEPUSR-')],
             [
             sg.Checkbox('Pre-response function handling', default=False, enable_events=True, key='-USER_AUTOHANDLE-'),
             sg.Checkbox('Let agent decide about pre-response ACTIONS', default=False, enable_events=True, key='-USER_AUTO_PRE-'),
@@ -417,6 +424,7 @@ async def main():
             [sg.Checkbox('Python intrpreter agent', default=True, enable_events=True, key='-ON/OFFPSP-')]
         ]
         srv_prefunctions = [
+            [sg.Checkbox('Infinite loop server', default=False, enable_events=True, key='-INFINITEPSRV-')],
             [
             sg.Checkbox('Pre-response function handling', default=False, enable_events=True, key='-SRV_AUTOHANDLE-'),
             sg.Checkbox('Let agent decide about pre-response functions', default=False, enable_events=True, key='-SRV_AUTO_PRE-'),
@@ -498,6 +506,7 @@ async def main():
             [sg.Checkbox('Python intrpreter agent', default=True, enable_events=True, key='-ON/OFFPCP-')]
         ]
         cli_prefunctions = [
+            [sg.Checkbox('Infinite loop client', default=False, enable_events=True, key='-INFINITEPCLI-')],
             [
             sg.Checkbox('Pre-response function handling', default=False, enable_events=True, key='-CLI_AUTOHANDLE-'),
             sg.Checkbox('Let agent decide about pre-response functions', default=False, enable_events=True, key='-CLI_AUTO_PRE-'),
@@ -516,19 +525,6 @@ async def main():
                 sg.Tab("Internet access", internet_searchingCP),
                 sg.Tab("File system handling", file_functionsCP),
                 sg.Tab("Python intrpreter", pyt_interpreterCP)
-            ]])]
-        ]
-        tab_preresponse = [
-            [
-            sg.Checkbox('Infinite loop user', default=False, enable_events=True, key='-INFINITEPUSR-'),
-            sg.Checkbox('Infinite loop server', default=False, enable_events=True, key='-INFINITEPSRV-'),
-            sg.Checkbox('Infinite loop client', default=False, enable_events=True, key='-INFINITEPCLI-')
-            ],
-            [sg.TabGroup(
-            [[
-                sg.Tab("User pre-response functions", user_prefunctions),
-                sg.Tab("Server pre-response functions", srv_prefunctions),
-                sg.Tab("Client pre-response functions", cli_prefunctions)
             ]])]
         ]
         tab_websocketsUF = [
@@ -592,6 +588,7 @@ async def main():
             [sg.Checkbox('Python intrpreter agent', default=True, enable_events=True, key='-ON/OFFFUP-')]
         ]
         user_followfunctions = [
+            [sg.Checkbox('Infinite loop user', default=False, enable_events=True, key='-INFINITEFUSR-')],
             [
             sg.Checkbox('Response follow up', default=False, enable_events=True, key='-USER_FOLLOWUP-'),
             sg.Checkbox('Let agent decide', default=False, enable_events=True, key='-USER_AUTO_FOLLOWUP-'),
@@ -673,8 +670,9 @@ async def main():
             [sg.Checkbox('Python intrpreter agent', default=True, enable_events=True, key='-ON/OFFFSPY-')]
         ]
         srv_followfunctions = [
+            [sg.Checkbox('Infinite loop server', default=False, enable_events=True, key='-INFINITEFSRV-')],
             [
-            sg.Checkbox('Server input follow up', default=False, enable_events=True, key='-SRV_FOLLOWUP-'),
+            sg.Checkbox('Server response follow up', default=False, enable_events=True, key='-SRV_FOLLOWUP-'),
             sg.Checkbox('Let agent decide', default=False, enable_events=True, key='-SRV_AUTO_FOLLOWUP-'),
             sg.Checkbox('Let agent handle messages', default=False, enable_events=True, key='-AUTO_MSG_FSRV-')
             ],
@@ -754,8 +752,9 @@ async def main():
             [sg.Checkbox('Python intrpreter agent', default=True, enable_events=True, key='-ON/OFFFCP-')]
         ]
         cli_followfunctions = [
+            [sg.Checkbox('Infinite loop client', default=False, enable_events=True, key='-INFINITEFCLI-')],
             [
-            sg.Checkbox('Server input follow up', default=False, enable_events=True, key='-CLIENT_FOLLOWUP-'),
+            sg.Checkbox('Client response follow up', default=False, enable_events=True, key='-CLIENT_FOLLOWUP-'),
             sg.Checkbox('Let agent decide actions', default=False, enable_events=True, key='-CLI_AUTO_FOLLOWUP-'),
             sg.Checkbox('Let agent handle messages', default=False, enable_events=True, key='-AUTO_MSG_FCLI-')
             ],
@@ -774,25 +773,33 @@ async def main():
                 sg.Tab("Python intrpreter", pyt_interpreterCF)
             ]])]
         ]
-        tab_followUp = [
-            [
-            sg.Checkbox('Infinite loop user', default=False, enable_events=True, key='-INFINITEFUSR-'),
-            sg.Checkbox('Infinite loop server', default=False, enable_events=True, key='-INFINITEFSRV-'),
-            sg.Checkbox('Infinite loop client', default=False, enable_events=True, key='-INFINITEFCLI-')
-            ],
+        tab_user_functions = [
             [sg.TabGroup(
             [[
-                sg.Tab("User follow-up functions", user_followfunctions),
-                sg.Tab("Server follow-up functions", srv_followfunctions),
-                sg.Tab("Client follow-up functions", cli_followfunctions)
+                sg.Tab("Pre-response functions", user_prefunctions),
+                sg.Tab("User follow-up functions", user_followfunctions)
+            ]])]
+        ]
+        tab_server_functions = [
+            [sg.TabGroup(
+            [[
+                sg.Tab("Pre-response functions", srv_prefunctions),
+                sg.Tab("Server follow-up functions", srv_followfunctions)
+            ]])]
+        ]
+        tab_client_functions = [
+            [sg.TabGroup(
+            [[
+                sg.Tab("Pre-response functions", cli_prefunctions),
+                sg.Tab("Server follow-up functions", cli_followfunctions)
             ]])]
         ]
         tab_layout3 = [
             [sg.TabGroup(
             [[
-                sg.Tab("Pre-response functions", tab_preresponse),
-                sg.Tab("Response follow-up functions", tab_followUp),
-
+                sg.Tab("User response thread", tab_user_functions),
+                sg.Tab("Server response thread", tab_server_functions),
+                sg.Tab("Client response thread", tab_client_functions)
             ]])]
         ]
         tab_layout6 = [
@@ -932,6 +939,123 @@ async def main():
             [sg.InputText(size=(200, 1), key='-GH_AGENT_INPUT-')],            
             [sg.Button('Ask GitHub agent')]
         ]
+        tab_projects = [
+            [
+            sg.Column([
+                [
+                sg.Button('Get list of projects'),
+                sg.Button('Get project data'),
+                sg.InputText(size=(50, 1), key='-PROJECT_NAME-'),
+                sg.Button('Update project name')
+                ]
+            ]), 
+            sg.Column([
+                [
+                sg.Button('Get list of associated agents'),
+                sg.Button('Get list of associated files')
+                ]
+            ]), 
+            sg.Column([
+                [sg.Button('Change project plan')]
+            ])
+            ],
+            [
+            sg.Column([
+                [
+                sg.Button('Change project description'),
+                sg.Multiline(size=(50, 4), key='-PROJECT_DESC-')                    
+                ]
+            ]), 
+            sg.Column([
+                [
+                sg.Button('Get project status'),
+                sg.Multiline(size=(50, 2), key='-PROJECT_STATUS-'),
+                sg.Button('Update project status'),
+                sg.Button('Create new project')
+                ]
+            ])
+            ]
+        ]
+        tab_agents = [
+            [
+            sg.Column([
+                [
+                sg.Button('Get list of agents'),
+                sg.Button('Get agent data'),
+                sg.InputText(size=(50, 1), key='-AGENT_NAME1-'),
+                sg.Button('Update agent name')
+                ],
+                [sg.Button('Add new agent')]
+            ]), 
+            sg.Column([
+                [
+                sg.Button('Get list of associated projects'),
+                sg.Multiline(size=(70, 3), key='-AGENT_ASSIGNMENTS-')
+                ]
+            ])
+            ],
+            [
+            sg.Column([
+                [
+                sg.Button('Change agent role'),
+                sg.Multiline(size=(100, 3), key='-AGENT_ROLE-')
+                ]
+            ]), 
+            sg.Column([
+                [
+                sg.InputText(size=(50, 1), key='-AGENT_PROJECT_NAME-'),
+                sg.Button('Associate agent with project')
+                ]
+            ])
+            ]
+        ]
+        tab_files = [
+            [
+            sg.Column([
+                [
+                sg.Button('Get list of files'),
+                sg.Button('Get file information'),
+                sg.InputText(size=(50, 1), key='-FILE_NAME1-'),
+                sg.Button('Update file name')
+                ],
+                [
+                sg.Button('Add new file'), 
+                sg.Button('Get list of associations')
+                ]
+            ]), 
+            ],
+            [  
+            sg.InputText(size=(50, 1), key='-FILE_PROJECT_NAME-'),
+            sg.Button('Associate file with project')          
+            ],
+            [            
+            sg.FileBrowse(target='-SQL_FILE-'),            
+            sg.InputText(size=(70, 1), key='-SQL_FILE-'), 
+            sg.Button('Update file path')
+            ],
+            [
+            sg.Column([
+                [sg.Multiline(size=(100, 2), key='-FILE_ASSOCIATION-')]
+            ]),
+            sg.Column([
+                [sg.Multiline(size=(100, 2), key='-FILE_DESCRIPTION-')]
+            ])
+            ]
+        ]
+        tab_SQLagent = [
+            [
+            sg.Checkbox('Use SQL agent', default=True, enable_events=True, key='-USE_AGENT6-'),
+            sg.Checkbox('Use SQL agent as main response', default=False, enable_events=True, key='-AGENT_RESPONSE6-')
+            ],
+            [sg.InputText(size=(190, 1), key='-SQL_INPUT-'), sg.Button('Ask SQL agent')], 
+            [sg.Multiline(size=(200, 5), key='-SQL_RESULT-', auto_refresh=True)],
+            [sg.TabGroup(
+            [[
+                sg.Tab("Manage projects", tab_projects),
+                sg.Tab("Manage agents", tab_agents),
+                sg.Tab("Manage files", tab_files)
+            ]])]
+        ]
         tab_inputoutput = [
             [
             sg.Multiline(size=(100, 15), key='-INPUT-', auto_refresh=True), 
@@ -954,8 +1078,8 @@ async def main():
             sg.Button('Get user pre-response message prompt')
             ],
             [
-            sg.Multiline(size=(100, 14), key='-SYSTEM_PREPROMPT_USR-', auto_refresh=True), 
-            sg.Multiline(size=(100, 14), key='-MSG_PREPROMPT_USR-', auto_refresh=True)
+            sg.Multiline(size=(100, 12), key='-SYSTEM_PREPROMPT_USR-', auto_refresh=True), 
+            sg.Multiline(size=(100, 12), key='-MSG_PREPROMPT_USR-', auto_refresh=True)
             ]
         ]
         tab_prepromptsSrv = [
@@ -964,8 +1088,8 @@ async def main():
             sg.Button('Get server pre-response message prompt')
             ],
             [
-            sg.Multiline(size=(100, 14), key='-SYSTEM_PREPROMPT_SRV-', auto_refresh=True), 
-            sg.Multiline(size=(100, 14), key='-MSG_PREPROMPT_SRV-', auto_refresh=True)
+            sg.Multiline(size=(100, 12), key='-SYSTEM_PREPROMPT_SRV-', auto_refresh=True), 
+            sg.Multiline(size=(100, 12), key='-MSG_PREPROMPT_SRV-', auto_refresh=True)
             ]
         ]
         tab_prepromptsCli = [
@@ -974,8 +1098,8 @@ async def main():
             sg.Button('Get client pre-response message prompt')
             ],
             [
-            sg.Multiline(size=(100, 14), key='-SYSTEM_PREPROMPT_CLI-', auto_refresh=True), 
-            sg.Multiline(size=(100, 14), key='-MSG_PREPROMPT_CLI-', auto_refresh=True)
+            sg.Multiline(size=(100, 12), key='-SYSTEM_PREPROMPT_CLI-', auto_refresh=True), 
+            sg.Multiline(size=(100, 12), key='-MSG_PREPROMPT_CLI-', auto_refresh=True)
             ]
         ]
         tab_preprompts = [
@@ -992,8 +1116,8 @@ async def main():
             sg.Button('Get user follow-up message prompt')
             ],
             [
-            sg.Multiline(size=(100, 14), key='-SYSTEM_FOLPROMPT_USR-', auto_refresh=True), 
-            sg.Multiline(size=(100, 14), key='-MSG_FOLPROMPT_USR-', auto_refresh=True)
+            sg.Multiline(size=(100, 12), key='-SYSTEM_FOLPROMPT_USR-', auto_refresh=True), 
+            sg.Multiline(size=(100, 12), key='-MSG_FOLPROMPT_USR-', auto_refresh=True)
             ]
         ]
         tab_folpromptsSrv = [
@@ -1002,8 +1126,8 @@ async def main():
             sg.Button('Get server follow-up message prompt')
             ],
             [
-            sg.Multiline(size=(100, 14), key='-SYSTEM_FOLPROMPT_SRV-', auto_refresh=True), 
-            sg.Multiline(size=(100, 14), key='-MSG_FOLPROMPT_SRV-', auto_refresh=True)
+            sg.Multiline(size=(100, 12), key='-SYSTEM_FOLPROMPT_SRV-', auto_refresh=True), 
+            sg.Multiline(size=(100, 12), key='-MSG_FOLPROMPT_SRV-', auto_refresh=True)
             ]
         ]
         tab_folpromptsCli = [
@@ -1012,8 +1136,8 @@ async def main():
             sg.Button('Get client follow-up message prompt')
             ],
             [
-            sg.Multiline(size=(100, 14), key='-SYSTEM_FOLPROMPT_CLI-', auto_refresh=True), 
-            sg.Multiline(size=(100, 14), key='-MSG_FOLPROMPT_CLI-', auto_refresh=True)
+            sg.Multiline(size=(100, 12), key='-SYSTEM_FOLPROMPT_CLI-', auto_refresh=True), 
+            sg.Multiline(size=(100, 12), key='-MSG_FOLPROMPT_CLI-', auto_refresh=True)
             ]
         ]
         tab_folprompts = [
@@ -1048,11 +1172,12 @@ async def main():
             [[
                 sg.Tab("Websocket connectivity", tab_layout1),
                 sg.Tab("Agent functionality", tab_layout3),
-                sg.Tab("SQL database/agent", tab_layout6),
+                sg.Tab("Chat history database/agent", tab_layout6),
                 sg.Tab("PDF/txt files agent", tab_layout7),
                 sg.Tab("Internet search agent", tab_layout8),
                 sg.Tab("File system agent", tab_layout9),
                 sg.Tab("Python interepreter agent", tab_interpreter),
+                sg.Tab("Database management", tab_SQLagent),
                 sg.Tab("GitHub agent", tab_github),
                 sg.Tab("Tools - Commands & description", tab_commands_descriptions)
             ]])],
@@ -1074,6 +1199,7 @@ async def main():
             [sg.InputText(size=(50, 1), key='-FLOWISE_ID-', default_text=api_keys.get('FlowiseID', '')), sg.Text('Flowise agent ID')],
             [sg.InputText(size=(50, 1), key='-HF_API-', default_text=api_keys.get('HuggingFaceAPI', '')), sg.Text('Hugging Face token')],
             [sg.InputText(size=(50, 1), key='-COHERE_API-', default_text=api_keys.get('CohereAPI', '')), sg.Text('Cohere API')],            
+            [sg.InputText(size=(50, 1), key='-LANGCHAIN_API-', default_text=api_keys.get('APIlangchain', '')), sg.Text('Langsmith API')],
             [sg.InputText(size=(50, 1), key='-GOOGLE_API-', default_text=api_keys.get('GoogleAPI', '')), sg.Text('Google API')],
             [sg.InputText(size=(50, 1), key='-GOOGLE_CSE-', default_text=api_keys.get('GoogleCSE', '')), sg.Text('Google CSE ID')],
             [sg.InputText(size=(50, 1), key='-GH_APP_ID-', default_text=api_keys.get('GitHubAppID', '')), sg.Text('GitHub app ID')],
@@ -1239,6 +1365,7 @@ async def main():
             'FlowiseID': window['-FLOWISE_ID-'].get(),
             'HuggingFaceAPI': window['-HF_API-'].get(),
             'CohereAPI': window['-COHERE_API-'].get(),
+            'APIlangchain': window['-LANGCHAIN_API-'].get(),
             'GoogleAPI': window['-GOOGLE_API-'].get(),
             'GoogleCSE': window['-GOOGLE_CSE-'].get(),
             'GitHubAppID': window['-GH_APP_ID-'].get(),
@@ -2944,6 +3071,7 @@ async def main():
         outputs.append(dec)
         history.append(dec)
         window.write_event_value('-WRITE_COMMAND-', (dec, follow_up))
+        
         if re.search(r'/sendBackToUser', str(text)):
             if window['-USE_NAME-'].get():
                 name = window['-AGENT_NAME-'].get()
@@ -3402,7 +3530,7 @@ async def main():
                     window.write_event_value('-UPDATE_CLIENTS-', '')
 
         except Exception as e:
-            print(f"Error: {e}")    
+            print(f"Error: {e}")
 
     def create_vector_store(update_progress, window, SQLagent):        
         try:
@@ -3681,7 +3809,7 @@ async def main():
         except Exception as e:
             print(f"Error: {e}")
 
-    async def handle_user(window, message, neural, SQLagent, PDFagent, searchAgent, fileAgent):
+    async def handle_user(window, message, neural, SQLagent, PDFagent, searchAgent, fileAgent, SQLmanager):
         event, values = window.read(timeout=100)
         usrinputs = []
         usroutputs = []
@@ -3696,9 +3824,10 @@ async def main():
         window.write_event_value('-INCOMING_MESSAGE-', msg)
         cli_storeMsg(msg)
         follow_up = 'user'
+        gui = 'PySimpleGUI'
 
         if not window['-USER_AUTOHANDLE-'].get():             
-            response = await give_response(window, follow_up, neural, msg, SQLagent, PDFagent, searchAgent, fileAgent)
+            response = await websocket_manager.give_response(window, gui, follow_up, neural, message, SQLagent, PDFagent, searchAgent, fileAgent, SQLmanager, api_keys)
             data = json.loads(response)
             text = data['message']
             if window['-USE_NAME-'].get():
@@ -3715,25 +3844,25 @@ async def main():
             if window['-AUTO_MSG_PUSR-'].get():
                 websocket = 'anything'
                 port = 9999
-                await decideMsg(window, websocket, port, neural, usrhistory, usrinputs, usroutputs, msg, follow_msg, follow_up)
+                await websocket_manager.decideMsg(window, gui, websocket, port, neural, usrhistory, usrinputs, usroutputs, message, msg1, follow_up, api_keys)
                 if window['-INFINITEPUSR-'].get():
-                    await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)                                        
+                    await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, msg1, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)                                        
             else:
                 if window['-INFINITEPUSR-'].get():
-                    await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)
+                    await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, msg1, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)
                 else:
                     if window['-USER_FOLLOWUP-'].get():
                         actionType = 'follow_up'
                         port = 6699
                         if not window['-USER_AUTO_FOLLOWUP-'].get():
-                            follow = await takeAction(window, port, neural, usrhistory, usrinputs, usroutputs, msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up)
+                            follow = await websocket_manager.takeAction(window, gui, port, neural, usrhistory, usrinputs, usroutputs, msg, agentSQL, PDFagent, searchAgent, fileAgent, SQLmanager, follow_up, api_keys)
                             follow_msg = f"Initial output: {text} Follow-up output: {follow}"
                             print(follow_msg)
                             window.write_event_value('-NODE_RESPONSE-', follow_msg)
                             srv_storeMsg(follow_msg)
                             if window['-AUTO_MSG_PUSR-'].get():
                                 port = 9898
-                                await decideMsg(window, websocket, port, neural, usrhistory, usrinputs, usroutputs, msg, follow_msg, follow_up)
+                                await websocket_manager.decideMsg(window, gui, websocket, port, neural, usrhistory, usrinputs, usroutputs, msg, follow_msg, follow_up, api_keys)
                                 if window['-INFINITEPUSR-'].get():
                                     await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)                                        
                             else:
@@ -3741,10 +3870,10 @@ async def main():
                                     await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)                                        
 
                         else:
-                            await USRfollow_up(window, neural, usrhistory, usrinputs, usroutputs, msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)
+                            await USRfollow_up(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)
                             if window['-AUTO_MSG_PUSR-'].get():
                                 port = 9898
-                                await decideMsg(window, websocket, port, neural, usrhistory, usrinputs, usroutputs, msg, follow_msg, follow_up)
+                                await websocket_manager.decideMsg(window, gui, websocket, port, neural, usrhistory, usrinputs, usroutputs, message, follow_msg, follow_up, api_keys)
                                 if window['-INFINITEPUSR-'].get():
                                     await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)                                        
                             else:
@@ -3762,7 +3891,7 @@ async def main():
                         actionType = 'follow_up'
                         port =9966
                         if not window['-USER_AUTO_FOLLOWUP-'].get():             
-                            act = await takeAction(window, port, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)
+                            act = await websocket_manager.takeAction(window, gui, port, neural, usrhistory, usrinputs, usroutputs, msg, agentSQL, PDFagent, searchAgent, fileAgent, SQLmanager, follow_up, api_keys)
                             data = json.loads(act)
                             name = data['name']
                             mes = data['message']
@@ -3770,13 +3899,13 @@ async def main():
                             window.write_event_value('-NODE_RESPONSE-', actMsg)
                             srv_storeMsg(actMsg)
                             if window['-AUTO_MSG_FUSR-'].get():
-                                await decideMsg(window, websocket, port, neural, usrhistory, usrinputs, usroutputs, msg, follow_msg, follow_up)
+                                await websocket_manager.decideMsg(window, gui, websocket, port, neural, usrhistory, usrinputs, usroutputs, message, actMsg, follow_up, api_keys)
                                 if window['-INFINITEFUSR-'].get():
                                     await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)                                        
                         else:    
                             await USRfollow_up(window, neural, usrhistory, usrinputs, usroutputs, msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)
                             if window['-AUTO_MSG_PUSR-'].get():
-                                await decideMsg(window, websocket, port, neural, usrhistory, usrinputs, usroutputs, msg, follow_msg, follow_up)
+                                await websocket_manager.decideMsg(window, gui, websocket, port, neural, usrhistory, usrinputs, usroutputs, message, actMsg, follow_up, api_keys)
                                 if window['-INFINITEPUSR-'].get():
                                     await USRinfiniteLoop(window, neural, usrhistory, usrinputs, usroutputs, follow_msg, SQLagent, PDFagent, searchAgent, fileAgent, follow_up, actionType)                                        
                             else:
@@ -4091,6 +4220,7 @@ async def main():
         window['-FLOWISE_ID-'].update(api_keys.get('FlowiseID', ''))
         window['-HF_API-'].update(api_keys.get('HuggingFaceAPI', ''))
         window['-COHERE_API-'].update(api_keys.get('CohereAPI', ''))
+        window['-LANGCHAIN_API-'].update(api_keys.get('APIlangchain', ''))
         window['-GOOGLE_API-'].update(api_keys.get('GoogleAPI', ''))
         window['-GOOGLE_CSE-'].update(api_keys.get('GoogleCSE', ''))
         window['-GH_APP_ID-'].update(api_keys.get('GitHubAppID', ''))
@@ -4191,6 +4321,141 @@ async def main():
             elif event == '-UPDATE PROGRESS-':
                 # Update the progress bar with the value sent from the thread
                 window['-PROGRESS BAR-'].update(values[event])
+
+            elif event == 'Get list of projects':
+                SQLmanager = SQLmanagement()
+                projects = SQLmanager.get_projects()
+                window['-SQL_RESULT-'].update(projects)
+
+            elif event == 'Get project data':
+                if window['-PROJECT_NAME-']:
+                    SQLmanager = SQLmanagement()
+                    name = values['-PROJECT_NAME-']
+                    project = SQLmanager.get_project_by_name(name)
+                    window['-SQL_RESULT-'].update(project)
+                else:    
+                    window['-SQL_RESULT-'].update("Provide project's name")
+
+            elif event == 'Get list of associated agents':
+                if window['-PROJECT_NAME-']:
+                    SQLmanager = SQLmanagement()
+                    name = values['-PROJECT_NAME-']
+                    agents = SQLmanager.get_agents_for_project(name)
+                    window['-SQL_RESULT-'].update(agents)
+                else:    
+                    window['-SQL_RESULT-'].update("Provide project's name")
+
+            elif event == 'Get list of associated files':
+                if window['-PROJECT_NAME-']:
+                    SQLmanager = SQLmanagement()
+                    name = values['-PROJECT_NAME-']
+                    files = SQLmanager.get_files_for_project(name)
+                    window['-SQL_RESULT-'].update(files)
+                else:    
+                    window['-SQL_RESULT-'].update("Provide project's name")
+
+            elif event == 'Create new project':
+                if window['-PROJECT_NAME-']:
+                    name = values['-PROJECT_NAME-']
+                    if window['-PROJECT_DESC-']:
+                        description = values['-PROJECT_DESC-']
+                    else:
+                        description = "<empty>"
+                    if window['-OUTPUT-']:
+                        plan = values['-OUTPUT-']
+                    else:
+                        plan = "<empty>"
+                    timestamp = datetime.datetime.now().isoformat()
+                    status = f"Project created by user (time: {timestamp})"
+                    SQLmanager = SQLmanagement()
+                    SQLmanager.add_project(name, description, plan, status)
+                    project = SQLmanager.get_project_by_name(name)
+                    window['-SQL_RESULT-'].update(project)
+                else:    
+                    window['-SQL_RESULT-'].update("Provide project's name")
+
+            elif event == 'Get list of agents':
+                SQLmanager = SQLmanagement()
+                agents = SQLmanager.get_agents()
+                window['-SQL_RESULT-'].update(agents)
+
+            elif event == 'Add new agent':
+                if window['-AGENT_NAME1-']:
+                    agent_name = values['-AGENT_NAME1-']
+                    if window['-AGENT_ROLE-']:
+                        role = values['-AGENT_ROLE-']
+                    else:
+                        role = "<empty>"
+                    SQLmanager = SQLmanagement()
+                    SQLmanager.add_agent(agent_name, role)
+                    agent = SQLmanager.get_agent_by_name(agent_name)
+                    window['-SQL_RESULT-'].update(agent)
+                else:    
+                    window['-SQL_RESULT-'].update("Provide agent's name")
+
+            elif event == 'Associate agent with project':
+                if window['-AGENT_NAME1-']:
+                    agent_name = values['-AGENT_NAME1-']
+                    if window['-AGENT_PROJECT_NAME-']:
+                        project_name = values['-AGENT_PROJECT_NAME-']
+                        SQLmanager = SQLmanagement()
+                        SQLmanager.add_agent_to_project(project_name, agent_name)
+                        projects = SQLmanager.get_agent_projects(agent_name)
+                        agents = SQLmanager.get_project_agents(project_name)
+                        proj = str(projects)
+                        ag = str(agents)
+                        SQLmanager.update_agent_projects(agent_name, proj)
+                        SQLmanager.update_project_agents(project_name, ag)
+                        agent = SQLmanager.get_agent_by_name(agent_name)
+                        window['-SQL_RESULT-'].update(agent)
+                    else:
+                        window['-SQL_RESULT-'].update("Provide project's name")
+                else:
+                    window['-SQL_RESULT-'].update("Provide agent's name")
+
+            elif event == 'Get list of files':
+                SQLmanager = SQLmanagement()
+                files = SQLmanager.get_files()
+                window['-SQL_RESULT-'].update(files)
+
+            elif event == 'Add new file':
+                SQLmanager = SQLmanagement()
+                if window['-FILE_NAME1-']:
+                    file_name = values['-FILE_NAME1-']
+                    if window['-SQL_FILE-']:
+                        path = values['-SQL_FILE-']
+                        if window['-FILE_DESCRIPTION-']:
+                            description = values['-FILE_DESCRIPTION-']
+                        else:
+                            description = "<empty>"    
+                        SQLmanager.add_file(file_name, path, description)
+                        file = SQLmanager.get_file_by_name(file_name)
+                        window['-SQL_RESULT-'].update(file)
+
+                    else:
+                        window['-SQL_RESULT-'].update("Provide file's path")
+                else:    
+                    window['-SQL_RESULT-'].update("Provide file's name")
+
+            elif event == 'Associate file with project':
+                if window['-FILE_NAME1-']:
+                    file_name = values['-FILE_NAME1-']
+                    if window['-FILE_PROJECT_NAME-']:
+                        project_name = values['-FILE_PROJECT_NAME-']
+                        SQLmanager = SQLmanagement()
+                        SQLmanager.add_file_to_project(project_name, file_name)
+                        fil = SQLmanager.get_project_files(project_name)
+                        proj = SQLmanager.get_file_projects(file_name)
+                        files = str(fil)
+                        projects = str(proj)
+                        SQLmanager.update_project_files(project_name, files)
+                        SQLmanager.update_file_projects(file_name, projects)
+                        file = SQLmanager.get_file_by_name(file_name)
+                        window['-SQL_RESULT-'].update(file)
+                    else:
+                        window['-SQL_RESULT-'].update("Provide project's name")
+                else:    
+                    window['-SQL_RESULT-'].update("Provide file's name")
 
             elif event == 'Save client message in chat history':
                 msg = values['-INPUT-']
@@ -4589,107 +4854,6 @@ async def main():
                 if source == 'client':
                     window['-MSG_FOLPROMPT_CLI-'].print(f"{info}\n")
 
-            elif event[0] == '-RESPONSE_THREAD-':
-
-                if event == '-PRE_RESPONSE_THREAD-':
-                    websocket, neural, history, inputs, outputs, msg, agentSQL, PDFagent, searchAgent, fileAgent, follow_up, MsgDecide, autohandle, infiniteLoop = values['-PRE_REPONSE_THREAD-']
-                    pre_response_thread(window, websocket, neural, history, inputs, outputs, msg, agentSQL, PDFagent, searchAgent, fileAgent, follow_up, MsgDecide, autohandle, infiniteLoop)
-
-                elif event == '-FOLLOW_UP_THREAD-':
-                    websocket, neural, history, inputs, outputs, msg, agentSQL, PDFagent, searchAgent, fileAgent, follow_up, MsgDecide, autohandle, infiniteLoop = values['-FOLLOW_UP_THREAD-']
-                    FollowUp_thread(window, websocket, neural, history, inputs, outputs, msg, agentSQL, PDFagent, searchAgent, fileAgent, follow_up, MsgDecide, autohandle, infiniteLoop)
-
-                elif event [1] == '-FOLLOWUP_TOOLS_PROMPT-':
-                    info, source = values['-FOLLOWUP_TOOLS_PROMPT-']
-                    if source == 'user':
-                        window['-SYSTEM_FOLPROMPT_USR-'].print(f"{info}\n")
-                    if source == 'server':
-                        window['-SYSTEM_FOLPROMPT_SRV-'].print(f"{info}\n")
-                    if source == 'client':
-                        window['-SYSTEM_FOLPROMPT_CLI-'].print(f"{info}\n")
-
-                elif event [1] == '-FOLLOWUP_TOOLS_MSG-':
-                    info, source = values['-FOLLOWUP_TOOLS_PROMPT-']
-                    if source == 'user':
-                        window['-MSG_FOLPROMPT_USR-'].print(f"{info}\n")
-                    if source == 'server':
-                        window['-MSG_FOLPROMPT_SRV-'].print(f"{info}\n")
-                    if source == 'client':
-                        window['-MSG_FOLPROMPT_CLI-'].print(f"{info}\n")
-
-                elif event [1] == '-PRERESP_TOOLS_PROMPT-':
-                    info, source = values['-PRERESP_TOOLS_PROMPT-']
-                    if source == 'user': 
-                        window['-SYSTEM_PREPROMPT_USR-'].print(f"{info}\n")
-                    if source == 'server':
-                        window['-SYSTEM_PREPROMPT_SRV-'].print(f"{info}\n")
-                    if source == 'client':
-                        window['-SYSTEM_PREPROMPT_CLI-'].print(f"{info}\n")
-
-                elif event [1] == '-PRERESP_TOOLS_MSG-':
-                    info, source = values['-PRERESP_TOOLS_MSG-']
-                    if source == 'user':
-                        window['-MSG_PREPROMPT_USR-'].print(f"{info}\n")
-                    if source == 'server':
-                        window['-MSG_PREPROMPT_SRV-'].print(f"{info}\n")
-                    if source == 'client':
-                        window['-MSG_PREPROMPT_CLI-'].print(f"{info}\n")
-
-                elif event [1] == '-UPDATE_CLIENTS-':
-                    serverPort = get_port(window)
-                    server_name = get_server_name(serverPort) 
-                    listClients = list_clients(serverPort)
-                    if server_name is None:
-                        window['-SERVER_PORTS-'].update(servers)
-                    if listClients is None:
-                        window['-CLIENT_PORTS-'].update(clients)                    
-                    else:    
-                        window['-SERVER_PORTS-'].update(server_name)
-                        window['-CLIENT_PORTS-'].update(listClients)
-
-                elif event [1] == '-WRITE_QUERY-':
-                    text = values['-WRITE_QUERY-']
-                    window['-QUERYDB-'].update(text)
-
-                elif event [1] == '-WRITE_QUERY1-':
-                    text = values['-WRITE_QUERY1-']
-                    window['-QUERYDB-'].update(text)
-
-                elif event [1] == '-WRITE_FILE_CONTENT-':
-                    file_cont = values['-WRITE_FILE_CONTENT-']
-                    window['-FILE_CONTENT-'].print(file_cont)
-
-                elif event [1] == '-PRINT_SEARCH_RESULTS-':
-                    results = values['-PRINT_SEARCH_RESULTS-']
-                    window['-SEARCH_RESULT-'].print(results)
-
-                elif event [1] == '-INTERPRETERS-':
-                    msg = values['-INTERPRETERS-']
-                    window['-INTERPRETER-'].update(msg)
-
-                elif event [1] == '-INCOMING_MESSAGE-':
-                    incoming_message = values['-INCOMING_MESSAGE-']
-                    window['-INPUT-'].update(incoming_message)
-                    window['-CHAT-'].print(f"{incoming_message}\n")
-
-                elif event [1] == '-NODE_RESPONSE-':
-                    node_response = values['-NODE_RESPONSE-']
-                    window['-OUTPUT-'].update(node_response)
-                    window['-CHAT-'].print(f"{node_response}\n")
-
-                elif event [1] == '-DISPLAY_COLLECTIONS-':
-                    collection_list = values['-DISPLAY_COLLECTIONS-']
-                    window['-SEARCH_RESULT-'].print(collection_list)
-
-                elif event [1] == '-WRITE_COMMAND-':
-                    source, command = values['-WRITE_COMMAND-']
-                    if source == 'user':
-                        window['-USER-'].print(f"{command}\n")
-                    if source == 'server':
-                        window['-SERVER-'].print(f"{command}\n")
-                    if source == 'client':
-                        window['-CLIENT-'].print(f"{command}\n")
-
             elif event == '-WRITE_QUERY-':
                 text = values['-WRITE_QUERY-']
                 window['-QUERYDB-'].update(text)
@@ -4752,7 +4916,8 @@ async def main():
                 data = json.loads(resp)
                 agentName = data['name']
                 msgText = data['message']
-                resp = f"{agentName}: {msgText}"
+                timestamp = datetime.datetime.now().isoformat()
+                resp = f"{agentName}: {msgText} (time: {timestamp})"
                 window['-GH_AGENT-'].update(resp)
                 if values['-AGENT_RESPONSE4-']:
                     window['-OUTPUT-'].update(resp)
@@ -4936,11 +5101,14 @@ async def main():
                     window['-QUERYDB-'].print(resp)
                 else:    
                     window['-QUERYDB-'].print(resp)
+                
+            elif event == 'Get Server list':
+                window['-SERVER_INFO-'].update(str(websocket_manager.servers))
 
             elif event == '-UPDATE_CLIENTS-':
                 serverPort = get_port(window)
-                server_name = get_server_name(serverPort) 
-                listClients = list_clients(serverPort)
+                server_name = websocket_manager.get_server_name(serverPort) 
+                listClients = websocket_manager.list_clients(serverPort)
                 if server_name is None:
                     window['-SERVER_PORTS-'].update(servers)
                 if listClients is None:
@@ -4950,9 +5118,12 @@ async def main():
                     window['-CLIENT_PORTS-'].update(listClients)
 
             elif event == 'Start WebSocket server':
+                gui = 'PySimpleGUI'
                 port = get_port(window)                
                 provider = values['-PROVIDER-']
                 api = get_api(window)
+                SQLmanager = SQLmanagement()
+                
                 if provider == 'Fireworks':
                     neural = Fireworks(api)
                     name = f"Llama3 server port: {port}"
@@ -4978,12 +5149,7 @@ async def main():
                 if provider == 'Flowise':
                     neural = Flowise(api)
                     name = f"Flowise agent server port: {port}"
-                if values['-AGENT_RESPONSE-']:
-                    neural = SQLagent
-                    name = f"Chat memory agent at port: {port}"
-                if values['-AGENT_RESPONSE1-']:
-                    neural = PDFagent
-                    name = f"Document vector store agent at port: {port}"
+
                 if SQLagent is None:                
                     SQLagent = NeuralAgent()
                 if PDFagent is None:      
@@ -4991,14 +5157,16 @@ async def main():
                 if searchAgent is None:
                     searchAgent = NeuralAgent() 
                 if fileAgent is None:
-                    fileAgent = NeuralAgent()  
+                    fileAgent = NeuralAgent()                      
 
-                start_server_thread(window, neural, name, port, SQLagent, PDFagent, searchAgent, fileAgent)
+                websocket_manager.start_server_thread(window, gui, neural, name, port, SQLagent, PDFagent, searchAgent, fileAgent, SQLmanager, api_keys)
 
             elif event == 'Start WebSocket client':
+                gui = 'PySimpleGUI'
                 port = get_port(window)
                 provider = values['-PROVIDER-']
                 api = get_api(window)
+                SQLmanager = SQLmanagement()
 
                 if provider == 'Fireworks':
                     neural = Fireworks(api)
@@ -5025,15 +5193,17 @@ async def main():
                 if searchAgent is None:
                     searchAgent = NeuralAgent()   
                 if fileAgent is None:
-                    fileAgent = NeuralAgent()  
+                    fileAgent = NeuralAgent()
 
-                start_client_thread(window, neural, port, SQLagent, PDFagent, searchAgent, fileAgent)
+                websocket_manager.start_client_thread(window, gui, neural, port, SQLagent, PDFagent, searchAgent, fileAgent, SQLmanager, api_keys)
 
             elif event == 'Ask the agent':
                 
                 question = values['-USERINPUT-']
                 provider = values['-PROVIDER-']
                 api = get_api(window)
+                SQLmanager = SQLmanagement() 
+
                 if provider == 'Fireworks':
                     neural = Fireworks(api)
                 if provider == 'Copilot':                
@@ -5060,12 +5230,15 @@ async def main():
                     searchAgent = NeuralAgent()   
                 if fileAgent is None:
                     fileAgent = NeuralAgent()   
+                      
                 
-                respo = await handle_user(window, question, neural, SQLagent, PDFagent, searchAgent, fileAgent)    
-            
+                respo = await handle_user(window, question, neural, SQLagent, PDFagent, searchAgent, fileAgent, SQLmanager)    
+                window['-CHAT-'].print(respo)
+                window['-OUTPUT-'].update(respo)
+
             elif event == 'Get client list':
                 clientPort = get_port(window)
-                listClients = get_client_names(clientPort)
+                listClients = websocket_manager.get_client_names(clientPort)
                 window['-CLIENT_INFO-'].update(listClients)   
 
             elif event == 'Pass message to server node':
@@ -5124,14 +5297,14 @@ async def main():
                 msgCli = values['-OUTPUT-']
                 if values['-CLIENT_NAME-']:
                     clientName = values['-CLIENT_NAME-']
-                    await send_message_to_client(usrName, clientName, msgCli)
+                    await websocket_manager.send_message_to_client(usrName, clientName, msgCli)
                 else:
                     print("provide client name")
 
             elif event == 'Stop WebSocket server':
                 port = get_port(window)
                 result = await stopSRV(port)
-                end = get_server_info(port)
+                end = websocket_manager.get_server_info(port)
                 window['-SERVER_INFO-'].print(result)
                 window['-SERVER_PORTS-'].update(end)
                 window['-CLIENT_PORTS-'].update(servers)
@@ -5145,7 +5318,7 @@ async def main():
                 window['-USERINPUT-'].update('')
             elif event == 'Get server info':
                 port = get_port(window)
-                info = get_server_info(port)
+                info = websocket_manager.get_server_info(port)
                 window['-SERVER_INFO-'].update(info)
 
             if api_management_window is not None:
